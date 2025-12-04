@@ -7,6 +7,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,10 +53,10 @@ fun Sidebar(
             )
 
             IconButton(onClick = { onNavigate(Screen.BackupPrivateKey) }) {
-                Text(
-                    "🔑",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White
+                Icon(
+                    Icons.Default.Key,
+                    contentDescription = "Backup Private Key",
+                    tint = Color.White
                 )
             }
         }
