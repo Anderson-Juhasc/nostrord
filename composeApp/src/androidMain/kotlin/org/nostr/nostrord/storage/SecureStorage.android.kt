@@ -1,160 +1,96 @@
 package org.nostr.nostrord.storage
 
-import java.util.prefs.Preferences
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.SecretKeySpec
-import java.security.SecureRandom
-import java.util.Base64
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.SharedPreferences
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
-// Android uses same implementation as JVM
+@SuppressLint("StaticFieldLeak")
 actual object SecureStorage {
-    private val prefs = Preferences.userNodeForPackage(SecureStorage::class.java)
+    private const val PREFS_NAME = "nostr_secure_prefs"
     private const val PRIVATE_KEY_PREF = "nostr_private_key"
-    private const val ENCRYPTION_KEY_PREF = "encryption_key"
     private const val JOINED_GROUPS_PREFIX = "joined_groups_"
     private const val CURRENT_RELAY_URL = "current_relay_url"
     
-    init {
-        if (prefs.get(ENCRYPTION_KEY_PREF, null) == null) {
-            val key = generateEncryptionKey()
-            prefs.put(ENCRYPTION_KEY_PREF, Base64.getEncoder().encodeToString(key.encoded))
-        }
-    }
+    private var appContext: Context? = null
     
-    private fun generateEncryptionKey(): SecretKey {
-        val keyGen = KeyGenerator.getInstance("AES")
-        keyGen.init(256, SecureRandom())
-        return keyGen.generateKey()
-    }
+    private val prefs: SharedPreferences
+        get() = appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            ?: throw IllegalStateException("SecureStorage not initialized. Call initialize(context) first.")
     
-    private fun getEncryptionKey(): SecretKey {
-        val keyString = prefs.get(ENCRYPTION_KEY_PREF, null)
-            ?: throw IllegalStateException("Encryption key not found")
-        val keyBytes = Base64.getDecoder().decode(keyString)
-        return SecretKeySpec(keyBytes, "AES")
-    }
-    
-    private fun encrypt(data: String): String {
-        val cipher = Cipher.getInstance("AES")
-        cipher.init(Cipher.ENCRYPT_MODE, getEncryptionKey())
-        val encrypted = cipher.doFinal(data.toByteArray())
-        return Base64.getEncoder().encodeToString(encrypted)
-    }
-    
-    private fun decrypt(encryptedData: String): String {
-        val cipher = Cipher.getInstance("AES")
-        cipher.init(Cipher.DECRYPT_MODE, getEncryptionKey())
-        val decrypted = cipher.doFinal(Base64.getDecoder().decode(encryptedData))
-        return String(decrypted)
+    fun initialize(context: Context) {
+        appContext = context.applicationContext
+        println("🔐 SecureStorage initialized")
     }
     
     actual fun savePrivateKey(privateKeyHex: String) {
-        val encrypted = encrypt(privateKeyHex)
-        prefs.put(PRIVATE_KEY_PREF, encrypted)
-        prefs.flush()
-        println("🔐 Private key saved securely")
+        prefs.edit().putString(PRIVATE_KEY_PREF, privateKeyHex).apply()
+        println("🔐 Private key saved")
     }
     
     actual fun getPrivateKey(): String? {
-        val encrypted = prefs.get(PRIVATE_KEY_PREF, null) ?: return null
-        return try {
-            decrypt(encrypted)
-        } catch (e: Exception) {
-            println("❌ Failed to decrypt private key: ${e.message}")
-            null
-        }
+        return prefs.getString(PRIVATE_KEY_PREF, null)
     }
     
     actual fun hasPrivateKey(): Boolean {
-        return prefs.get(PRIVATE_KEY_PREF, null) != null
+        return prefs.contains(PRIVATE_KEY_PREF)
     }
     
     actual fun clearPrivateKey() {
-        prefs.remove(PRIVATE_KEY_PREF)
-        prefs.flush()
+        prefs.edit().remove(PRIVATE_KEY_PREF).apply()
         println("🗑️ Private key cleared")
     }
     
     actual fun saveCurrentRelayUrl(relayUrl: String) {
-        saveString(CURRENT_RELAY_URL, relayUrl)
+        prefs.edit().putString(CURRENT_RELAY_URL, relayUrl).apply()
         println("💾 Saved current relay URL: $relayUrl")
     }
     
     actual fun getCurrentRelayUrl(): String? {
-        return getString(CURRENT_RELAY_URL)
+        return prefs.getString(CURRENT_RELAY_URL, null)
     }
     
     actual fun clearCurrentRelayUrl() {
-        remove(CURRENT_RELAY_URL)
+        prefs.edit().remove(CURRENT_RELAY_URL).apply()
         println("🗑️ Cleared current relay URL")
     }
     
     actual fun saveJoinedGroupsForRelay(relayUrl: String, groupIds: Set<String>) {
         val key = JOINED_GROUPS_PREFIX + relayUrl.hashCode()
         val json = Json.encodeToString(groupIds.toList())
-        saveString(key, json)
+        prefs.edit().putString(key, json).apply()
         println("💾 Saved ${groupIds.size} joined groups for relay: $relayUrl")
     }
     
     actual fun getJoinedGroupsForRelay(relayUrl: String): Set<String> {
         val key = JOINED_GROUPS_PREFIX + relayUrl.hashCode()
-        val json = getString(key) ?: return emptySet()
+        val json = prefs.getString(key, null) ?: return emptySet()
         return try {
             Json.decodeFromString<List<String>>(json).toSet()
         } catch (e: Exception) {
-            println("❌ Failed to parse joined groups for relay: ${e.message}")
+            println("❌ Failed to parse joined groups: ${e.message}")
             emptySet()
         }
     }
     
     actual fun clearJoinedGroupsForRelay(relayUrl: String) {
         val key = JOINED_GROUPS_PREFIX + relayUrl.hashCode()
-        remove(key)
+        prefs.edit().remove(key).apply()
         println("🗑️ Cleared joined groups for relay: $relayUrl")
     }
     
     actual fun clearAllJoinedGroups() {
-        try {
-            prefs.keys().forEach { key ->
-                if (key.startsWith(JOINED_GROUPS_PREFIX)) {
-                    prefs.remove(key)
-                }
-            }
-            prefs.flush()
-            println("🗑️ Cleared all relay-specific joined groups")
-        } catch (e: Exception) {
-            println("❌ Failed to clear all joined groups: ${e.message}")
+        val editor = prefs.edit()
+        prefs.all.keys.filter { it.startsWith(JOINED_GROUPS_PREFIX) }.forEach {
+            editor.remove(it)
         }
+        editor.apply()
+        println("🗑️ Cleared all joined groups")
     }
     
     actual fun clearAll() {
-        prefs.clear()
-        prefs.flush()
+        prefs.edit().clear().apply()
         println("🗑️ All secure storage cleared")
-    }
-    
-    private fun saveString(key: String, value: String) {
-        val encrypted = encrypt(value)
-        prefs.put(key, encrypted)
-        prefs.flush()
-    }
-    
-    private fun getString(key: String): String? {
-        val encrypted = prefs.get(key, null) ?: return null
-        return try {
-            decrypt(encrypted)
-        } catch (e: Exception) {
-            null
-        }
-    }
-    
-    private fun remove(key: String) {
-        prefs.remove(key)
-        prefs.flush()
     }
 }
